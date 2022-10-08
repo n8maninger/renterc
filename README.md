@@ -18,7 +18,7 @@ Contracts are formed for 1 week and 10 sectors of storage.
 
 ### Upload Data:
 ```sh
-renterc upload Big_Buck_Bunny_1080_10s_30MB.mp4
+renterc upload -f Big_Buck_Bunny_1080_10s_30MB.mp4 -n 1 -m 1
 ```
 
 Uploads the file `Big_Buck_Bunny_1080_10s_30MB.mp4` to a single host. At least
