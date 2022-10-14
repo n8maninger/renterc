@@ -84,7 +84,7 @@ func main() {
 			log.Fatal("failed to get wallet balance:", err)
 		}
 		log.Println("balance:", balance.HumanString())
-	case "list-hosts": // list the hosts from the Sia Central API
+	case "hosts": // list the hosts from the Sia Central API
 		flag.Parse()
 
 		// initialize the Sia Central API client
@@ -144,7 +144,7 @@ func main() {
 			}
 			log.Println("Formed contract:", contractID)
 		}
-	case "list": // list contracts
+	case "contracts": // list contracts
 		flag.Parse()
 
 		contracts, err := getAPIClient().Contracts()
