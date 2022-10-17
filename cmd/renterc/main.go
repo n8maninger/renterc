@@ -117,7 +117,7 @@ func init() {
 	// directory
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		// create the data directory if it doesn't exist
-		_ = os.MkdirAll(filepath.Join(dataDir, "files"), 0700)
+		_ = os.MkdirAll(dataDir, 0700)
 
 		var err error
 		// load or generate the renter key
