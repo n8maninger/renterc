@@ -60,6 +60,7 @@ func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
 // args
 var (
 	dataDir    string
+	dryRun     bool
 	renterPriv api.PrivateKey
 )
 
@@ -105,6 +106,7 @@ func init() {
 	formCmd.Flags().StringVarP(&contractUsageStr, "usage", "U", "1GiB", "contract usage, accepts a size and suffix (e.g. 1TiB)")
 
 	// register file flags
+	downloadCmd.Flags().BoolVar(&dryRun, "dry-run", false, "dry run, don't actually download the file")
 	uploadCmd.Flags().Uint8VarP(&minShards, "min-shards", "m", 1, "minimum number of shards")
 	uploadCmd.Flags().Uint8VarP(&totalShards, "total-shards", "n", 1, "total number of shards")
 

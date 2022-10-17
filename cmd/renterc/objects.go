@@ -71,8 +71,11 @@ var (
 		Short: "download a file from the network",
 		Long:  "Usage: renterc download <object> <file>",
 		Run: func(cmd *cobra.Command, files []string) {
+			var outputPath string
 			key := files[0]
-			outputPath := files[1]
+			if !dryRun {
+				outputPath = files[1]
+			}
 
 			log.Println("Downloading object with key", key)
 			start := time.Now()
@@ -191,6 +194,17 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) error
 		}
 
 		len += int64(slab.Length)
+	}
+
+	if dryRun {
+		js, _ := json.MarshalIndent(api.SlabsDownloadRequest{
+			Slabs:     obj.Slabs,
+			Offset:    0,
+			Length:    len,
+			Contracts: contracts,
+		}, "", "  ")
+		fmt.Println(string(js))
+		return nil
 	}
 
 	// download the file
