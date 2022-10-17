@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -25,7 +26,20 @@ var (
 		Use:   "objects",
 		Short: "list objects",
 		Run: func(cmd *cobra.Command, args []string) {
-			entries, err := renterdClient.ObjectEntries("/")
+			if len(args) == 1 {
+				obj, err := renterdClient.Object(args[0])
+				if err != nil {
+					log.Fatalf("failed to get object: %v", err)
+				}
+
+				js, err := json.MarshalIndent(obj, "", "  ")
+				if err != nil {
+					log.Fatalf("failed to marshal object: %v", err)
+				}
+				fmt.Println(string(js))
+				return
+			}
+			entries, err := renterdClient.ObjectEntries("")
 			if err != nil {
 				log.Fatal("failed to get object entries:", err)
 			}
