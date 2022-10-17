@@ -3,27 +3,30 @@ package main
 import (
 	"crypto/ed25519"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/rodaine/table"
 	"github.com/siacentral/apisdkgo"
 	"github.com/siacentral/apisdkgo/sia"
+	"github.com/spf13/cobra"
 	"go.sia.tech/renterd/api"
 	"go.sia.tech/siad/types"
 	"lukechampine.com/frand"
 )
 
-func getAPIClient() *api.Client {
-	return api.NewClient(os.Getenv("RENTERD_API_ADDR"), os.Getenv("RENTERD_API_PASSWORD"))
-}
+var (
+	// initialize the Sia Central API client
+	siaCentralClient = apisdkgo.NewSiaClient()
+	// initialize the renterd API client
+	renterdClient = func() *api.Client {
+		return api.NewClient(os.Getenv("RENTERD_API_ADDR"), os.Getenv("RENTERD_API_PASSWORD"))
+	}()
+)
 
 // loadOrInitRenterKey loads the renter key from the data directory, or
 // generates a new one if it doesn't exist.
@@ -54,127 +57,86 @@ func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
 	return renterKey, err
 }
 
-func main() {
-	var dataDir string
+// args
+var (
+	dataDir    string
+	renterPriv api.PrivateKey
+)
 
-	flag.StringVar(&dataDir, "d", ".", "data directory")
-
-	// load or generate the renter key
-	renterPriv, err := loadOrInitRenterKey(dataDir)
-	if err != nil {
-		log.Fatal("failed to load renter key:", err)
+var (
+	rootCmd = &cobra.Command{
+		Use:   "renterc",
+		Short: "renterc interacts with a renterd API",
+		Run:   func(cmd *cobra.Command, args []string) {},
 	}
 
-	cmd := strings.ToLower(os.Args[1])
-	switch cmd {
-	case "height":
-		flag.Parse()
+	hostsCmd = &cobra.Command{
+		Use:   "hosts",
+		Short: "get a list of hosts",
+		Run: func(cmd *cobra.Command, args []string) {
+			// initialize the Sia Central API client
+			siaCentralClient := apisdkgo.NewSiaClient()
 
-		// get the current block height
-		tip, err := getAPIClient().ConsensusTip()
-		if err != nil {
-			log.Fatal("failed to get consensus tip:", err)
-		}
-		log.Println("current block:", tip.Height, tip.ID)
-	case "balance": // check the wallet's balance
-		flag.Parse()
-
-		balance, err := getAPIClient().WalletBalance()
-		if err != nil {
-			log.Fatal("failed to get wallet balance:", err)
-		}
-		log.Println("balance:", balance.HumanString())
-	case "hosts": // list the hosts from the Sia Central API
-		flag.Parse()
-
-		// initialize the Sia Central API client
-		siaCentralClient := apisdkgo.NewSiaClient()
-
-		// get the list of hosts
-		acceptingContracts, benchmarked := true, true
-		maxContractPrice := types.SiacoinPrecision.Div64(2)
-		var minUptime float32 = 0.85
-		hosts, err := siaCentralClient.GetActiveHosts(sia.HostFilter{
-			AcceptingContracts: &acceptingContracts,
-			MaxContractPrice:   &maxContractPrice,
-			MinUptime:          &minUptime,
-			Benchmarked:        &benchmarked,
-		})
-		if err != nil {
-			log.Fatal("failed to get hosts:", err)
-		}
-		tbl := table.New("#", "Public Key", "Address")
-		for i, host := range hosts {
-			tbl.AddRow(i+1, host.PublicKey, host.NetAddress)
-		}
-		tbl.Print()
-	case "form": // form a contract with a host
-		flag.Parse()
-
-		// get the host keys from the args
-		hostKeys := flag.Args()[1:]
-
-		if len(hostKeys) == 1 {
-			log.Println("Forming contract with host", hostKeys[0])
-			var hostKey api.PublicKey
-			err := hostKey.UnmarshalText([]byte(hostKeys[0]))
+			// get the list of hosts
+			acceptingContracts, benchmarked := true, true
+			maxContractPrice := types.SiacoinPrecision.Div64(2)
+			var minUptime float32 = 0.85
+			hosts, err := siaCentralClient.GetActiveHosts(sia.HostFilter{
+				AcceptingContracts: &acceptingContracts,
+				MaxContractPrice:   &maxContractPrice,
+				MinUptime:          &minUptime,
+				Benchmarked:        &benchmarked,
+			})
 			if err != nil {
-				log.Fatal("failed to parse host key:", err)
+				log.Fatal("failed to get hosts:", err)
 			}
-			contractID, err := formContract(renterPriv, hostKey)
-			if err != nil {
-				log.Fatal("failed to form contract:", err)
+			tbl := table.New("#", "Public Key", "Address")
+			for i, host := range hosts {
+				tbl.AddRow(i+1, host.PublicKey, host.NetAddress)
 			}
-			log.Println("Formed contract:", contractID)
-			return
-		}
+			tbl.Print()
+		},
+	}
+)
 
-		log.Printf("forming contract with %v hosts", len(hostKeys))
-		for i, host := range hostKeys {
-			log.Printf("Forming contract with host %v (%v/%v)", host, i+1, len(hostKeys))
-			var hostKey api.PublicKey
-			err := hostKey.UnmarshalText([]byte(hostKeys[0]))
-			if err != nil {
-				log.Fatal("failed to parse host key:", err)
-			}
-			contractID, err := formContract(renterPriv, hostKey)
-			if err != nil {
-				log.Println("failed to form contract:", err)
-				continue
-			}
-			log.Println("Formed contract:", contractID)
-		}
-	case "contracts": // list contracts
-		flag.Parse()
+func init() {
+	// register contract flags
+	formCmd.Flags().StringVarP(&contractDurationStr, "duration", "D", "1w", "contract duration, accepts a duration and suffix (e.g. 1w)")
+	formCmd.Flags().StringVarP(&contractUsageStr, "usage", "U", "1GiB", "contract usage, accepts a size and suffix (e.g. 1TiB)")
 
-		contracts, err := getAPIClient().Contracts()
+	// register file flags
+	uploadCmd.Flags().Uint8VarP(&minShards, "min-shards", "m", 1, "minimum number of shards")
+	uploadCmd.Flags().Uint8VarP(&totalShards, "total-shards", "n", 1, "total number of shards")
+
+	// register global flags
+	rootCmd.PersistentFlags().StringVarP(&dataDir, "dir", "d", ".", "data directory")
+
+	// before running any command, load the renter key and initialize the
+	// directory
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		// create the data directory if it doesn't exist
+		_ = os.MkdirAll(filepath.Join(dataDir, "files"), 0700)
+
+		var err error
+		// load or generate the renter key
+		renterPriv, err = loadOrInitRenterKey(dataDir)
 		if err != nil {
-			log.Fatal("failed to get contracts:", err)
+			log.Fatal("failed to load renter key:", err)
 		}
-		for _, c := range contracts {
-			log.Println(c.ID(), c.Revision.HostPublicKey())
-		}
-	case "upload": // upload a file
-		filePath := flag.String("f", "", "file to upload")
-		minShardsStr := flag.String("m", "1", "minimum number of shards")
-		totalShardsStr := flag.String("n", "1", "total number of shards")
-		flag.Parse()
+	}
 
-		minShards, err := strconv.ParseUint(*minShardsStr, 10, 8)
-		if err != nil {
-			log.Fatal("failed to parse minShards:", err)
-		}
-		totalShards, err := strconv.ParseUint(*totalShardsStr, 10, 8)
-		if err != nil {
-			log.Fatal("failed to parse totalShards:", err)
-		}
+	// add contract commands
+	contractsCmd.AddCommand(formCmd)
+	// add file commands
+	objectsCmd.AddCommand(uploadCmd, downloadCmd)
+	// add wallet commands
+	walletCmd.AddCommand(addressCmd, balanceCmd)
+	// add commands to root
+	rootCmd.AddCommand(contractsCmd, hostsCmd, objectsCmd, walletCmd)
+}
 
-		if err = uploadFile(renterPriv, filepath.Join(dataDir, "files"), *filePath, uint8(minShards), uint8(totalShards)); err != nil {
-			log.Fatal("failed to upload file:", err)
-		}
-	case "download": // download a file
-		panic("not implemented")
-	default:
-		log.Fatal("unknown command:", cmd)
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal(err)
 	}
 }
