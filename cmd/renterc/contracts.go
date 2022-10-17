@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 
+	"github.com/rodaine/table"
 	"github.com/spf13/cobra"
 	"go.sia.tech/renterd/api"
 	"go.sia.tech/renterd/wallet"
@@ -19,15 +21,43 @@ var (
 var (
 	contractsCmd = &cobra.Command{
 		Use:   "contracts",
-		Short: "get a list of contracts",
+		Short: "get a list of contracts or the details of a single contract",
 		Run: func(cmd *cobra.Command, args []string) {
+			// get the details of a single contract
+			if len(args) == 1 {
+				var id types.FileContractID
+				if err := id.LoadString(args[0]); err != nil {
+					log.Fatal(err)
+				}
+				contract, err := renterdClient.Contract(id)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				js, err := json.MarshalIndent(contract, "", "  ")
+				if err != nil {
+					log.Fatal(err)
+				}
+				fmt.Println(string(js))
+				return
+			}
+
+			tip, err := renterdClient.ConsensusTip()
+			if err != nil {
+				log.Fatal(err)
+			}
+
 			contracts, err := renterdClient.Contracts()
 			if err != nil {
 				log.Fatal("failed to get contracts:", err)
 			}
+
+			tbl := table.New("ID", "Expired", "Host", "Expiration Height", "Unspent Funds")
+
 			for _, c := range contracts {
-				log.Println(c.ID(), c.Revision.HostPublicKey())
+				tbl.AddRow(c.ID(), tip.Height >= c.EndHeight(), c.HostKey().String(), c.EndHeight(), c.RenterFunds())
 			}
+			tbl.Print()
 		},
 	}
 
