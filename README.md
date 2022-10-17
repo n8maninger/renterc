@@ -32,7 +32,7 @@ of three contracts must be formed.
 
 ### Download Data:
 ```sh
-renterc objects download Big_Buck_Bunny_1080_10s_30MB.mp4
+renterc objects download Big_Buck_Bunny_1080_10s_30MB.mp4 ~/dest.mp4
 ```
 
 Downloads the file `Big_Buck_Bunny_1080_10s_30MB.mp4` from the network, using
