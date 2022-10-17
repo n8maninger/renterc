@@ -9,6 +9,7 @@ go build -o bin/ ./cmd/renterc
 ```
 
 ## Usage
+The environment variables `RENTERD_API_ADDR` and `RENTERD_API_PASS` must be set to connect to a `renterd` instance.
 ### List Contracts:
 ```sh
 renterc contracts
