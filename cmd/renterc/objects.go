@@ -1,11 +1,17 @@
 package main
 
 import (
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"hash"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rodaine/table"
@@ -58,10 +64,11 @@ var (
 			for _, file := range files {
 				log.Println("Uploading", file)
 				start := time.Now()
-				if err := uploadFile(renterPriv, filepath.Join(dataDir, "files"), file, minShards, totalShards); err != nil {
+				checksum, err := uploadFile(renterPriv, filepath.Join(dataDir, "files"), file, minShards, totalShards)
+				if err != nil {
 					log.Fatal("failed to upload file:", err)
 				}
-				log.Printf("Uploaded %v in %v", file, time.Since(start))
+				log.Printf("Uploaded %v in %v (%v %x)", file, time.Since(start), hashAlgo, checksum)
 			}
 		},
 	}
@@ -79,42 +86,56 @@ var (
 
 			log.Println("Downloading object with key", key)
 			start := time.Now()
-			if err := downloadFile(renterPriv, key, outputPath); err != nil {
+			checksum, err := downloadFile(renterPriv, key, outputPath)
+			if err != nil {
 				log.Fatal("failed to download file:", err)
 			}
-			log.Printf("Downloaded %v in %v", key, time.Since(start))
+			log.Printf("Downloaded %v in %v (%v %x)", key, time.Since(start), hashAlgo, checksum)
 		},
 	}
 )
 
 // uploadFile uploads a file to the Sia network and adds a new object to renterd
-func uploadFile(renterPriv api.PrivateKey, dataDir, fp string, minShards, totalShards uint8) error {
+func uploadFile(renterPriv api.PrivateKey, dataDir, fp string, minShards, totalShards uint8) ([]byte, error) {
 	// choose the contracts to use
 	contracts, err := getUsableContracts(renterPriv, int(totalShards))
 	if err != nil {
-		return fmt.Errorf("failed to get usable contracts: %w", err)
+		return nil, fmt.Errorf("failed to get usable contracts: %w", err)
 	}
 
 	stat, err := os.Stat(fp)
 	if err != nil {
-		return fmt.Errorf("failed to stat file: %w", err)
+		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	file, err := os.Open(fp)
+	f, err := os.Open(fp)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer f.Close()
 
 	// grab the current block height
 	tip, err := renterdClient.ConsensusTip()
 	if err != nil {
-		return fmt.Errorf("failed to get consensus tip: %w", err)
+		return nil, fmt.Errorf("failed to get consensus tip: %w", err)
 	}
 
-	slabs, err := renterdClient.UploadSlabs(file, minShards, totalShards, tip.Height, contracts)
+	var h hash.Hash
+	switch strings.ToLower(hashAlgo) {
+	case "sha256":
+		h = sha256.New()
+	case "sha1":
+		h = sha1.New()
+	case "md5":
+		h = md5.New()
+	default:
+		return nil, fmt.Errorf("unknown hash algorithm: %v", hashAlgo)
+	}
+	tr := io.TeeReader(f, h)
+
+	slabs, err := renterdClient.UploadSlabs(tr, minShards, totalShards, tip.Height, contracts)
 	if err != nil {
-		return fmt.Errorf("failed to upload slabs: %w", err)
+		return nil, fmt.Errorf("failed to upload slabs: %w", err)
 	}
 
 	objs := object.SplitSlabs(slabs, []int{int(stat.Size())})
@@ -123,25 +144,25 @@ func uploadFile(renterPriv api.PrivateKey, dataDir, fp string, minShards, totalS
 		Slabs: objs[0],
 	})
 	if err != nil {
-		return fmt.Errorf("failed to add object: %w", err)
+		return nil, fmt.Errorf("failed to add object: %w", err)
 	}
-	return nil
+	return h.Sum(nil), nil
 }
 
-func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) error {
+func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) ([]byte, error) {
 	obj, err := renterdClient.Object(objectKey)
 	if err != nil {
-		return fmt.Errorf("failed to get object: %w", err)
+		return nil, fmt.Errorf("failed to get object: %w", err)
 	}
 
 	currentContracts, err := renterdClient.Contracts()
 	if err != nil {
-		return fmt.Errorf("failed to get contracts: %w", err)
+		return nil, fmt.Errorf("failed to get contracts: %w", err)
 	}
 
 	tip, err := renterdClient.ConsensusTip()
 	if err != nil {
-		return fmt.Errorf("failed to get consensus tip: %w", err)
+		return nil, fmt.Errorf("failed to get consensus tip: %w", err)
 	}
 
 	hostContracts := make(map[api.PublicKey]rhp.Contract)
@@ -174,7 +195,7 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) error
 				// grab the host's net address from the Sia Central API
 				host, err := siaCentralClient.GetHost(shard.Host.String())
 				if err != nil {
-					return fmt.Errorf("failed to get host: %w", err)
+					return nil, fmt.Errorf("failed to get host: %w", err)
 				}
 
 				contracts = append(contracts, api.Contract{
@@ -190,7 +211,7 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) error
 		}
 
 		if count < slab.MinShards {
-			return fmt.Errorf("not enough contracts available to download file")
+			return nil, fmt.Errorf("not enough contracts available to download file")
 		}
 
 		len += int64(slab.Length)
@@ -204,20 +225,33 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) error
 			Contracts: contracts,
 		}, "", "  ")
 		fmt.Println(string(js))
-		return nil
+		return nil, nil
 	}
 
 	// download the file
 	f, err := os.Create(outputPath)
 	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
+		return nil, fmt.Errorf("failed to create file: %w", err)
 	}
 	defer f.Close()
 
-	if err := renterdClient.DownloadSlabs(f, obj.Slabs, 0, len, contracts); err != nil {
-		return fmt.Errorf("failed to download file: %w", err)
-	} else if err := f.Sync(); err != nil {
-		return fmt.Errorf("failed to sync file: %w", err)
+	var h hash.Hash
+	switch strings.ToLower(hashAlgo) {
+	case "sha256":
+		h = sha256.New()
+	case "sha1":
+		h = sha1.New()
+	case "md5":
+		h = md5.New()
+	default:
+		return nil, fmt.Errorf("unknown hash algorithm: %v", hashAlgo)
 	}
-	return nil
+	mw := io.MultiWriter(f, h)
+
+	if err := renterdClient.DownloadSlabs(mw, obj.Slabs, 0, len, contracts); err != nil {
+		return nil, fmt.Errorf("failed to download file: %w", err)
+	} else if err := f.Sync(); err != nil {
+		return nil, fmt.Errorf("failed to sync file: %w", err)
+	}
+	return h.Sum(nil), nil
 }

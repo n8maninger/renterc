@@ -61,6 +61,7 @@ func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
 var (
 	dataDir    string
 	dryRun     bool
+	hashAlgo   string
 	renterPriv api.PrivateKey
 )
 
@@ -107,8 +108,11 @@ func init() {
 
 	// register file flags
 	downloadCmd.Flags().BoolVar(&dryRun, "dry-run", false, "dry run, don't actually download the file")
+	downloadCmd.Flags().StringVarP(&hashAlgo, "algo", "a", "sha256", "hash algorithm to use for verification")
+
 	uploadCmd.Flags().Uint8VarP(&minShards, "min-shards", "m", 1, "minimum number of shards")
 	uploadCmd.Flags().Uint8VarP(&totalShards, "total-shards", "n", 1, "total number of shards")
+	uploadCmd.Flags().StringVarP(&hashAlgo, "algo", "a", "sha256", "hash algorithm to use for verification")
 
 	// register global flags
 	rootCmd.PersistentFlags().StringVarP(&dataDir, "dir", "d", ".", "data directory")
