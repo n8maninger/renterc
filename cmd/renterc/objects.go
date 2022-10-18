@@ -102,18 +102,22 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 		return fmt.Errorf("failed to get usable contracts: %w", err)
 	}
 
+	// not ideal, but io.Pipe lets us stream each file to renterd
 	r, w := io.Pipe()
 
 	var wg sync.WaitGroup
 	wg.Add(len(files))
 	lengths := make([]int, 0, len(files))
+	// start a goroutine to stream each file to renterd
 	go func() {
 		for _, file := range files {
 			err := func() error {
+				// get the length of the file
 				stat, err := os.Stat(file)
 				if err != nil {
 					return fmt.Errorf("failed to stat file: %w", err)
 				}
+				// append the length to the slice
 				lengths = append(lengths, int(stat.Size()))
 				f, err := os.Open(file)
 				if err != nil {
@@ -121,6 +125,7 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 				}
 				defer f.Close()
 
+				// copy the file contents to the pipe
 				_, err = io.Copy(w, f)
 				if err != nil {
 					return fmt.Errorf("failed to copy file: %w", err)
@@ -134,7 +139,7 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 			wg.Done()
 		}
 
-		// wait for all files to be uploaded
+		// wait for all files to be copied
 		wg.Wait()
 		w.Close()
 	}()
@@ -145,20 +150,23 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 		return fmt.Errorf("failed to get consensus tip: %w", err)
 	}
 
+	// upload the slabs, using the pipe as the source. Each file will be copied
+	// to the pipe, then the pipe will be closed.
 	slabs, err := renterdClient.UploadSlabs(r, minShards, totalShards, tip.Height, contracts)
 	if err != nil {
 		return fmt.Errorf("failed to upload slabs: %w", err)
 	}
 
+	// split the uploaded slabs into objects and add each object to renterd
 	objs := object.SplitSlabs(slabs, lengths)
 	for i, file := range files {
 		err = renterdClient.AddObject(filepath.Base(file), object.Object{
 			Key:   object.GenerateEncryptionKey(),
 			Slabs: objs[i],
 		})
-	}
-	if err != nil {
-		return fmt.Errorf("failed to add object: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to add object %v: %w", filepath.Base(file), err)
+		}
 	}
 	return nil
 }
