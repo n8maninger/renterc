@@ -149,8 +149,6 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 	if err != nil {
 		return fmt.Errorf("failed to upload slabs: %w", err)
 	}
-	log.Println("uploaded", slabs)
-	log.Println("len", lengths)
 
 	objs := object.SplitSlabs(slabs, lengths)
 	for i, file := range files {
