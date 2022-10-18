@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rodaine/table"
@@ -47,7 +49,7 @@ var (
 			}
 			entries, err := renterdClient.ObjectEntries("")
 			if err != nil {
-				log.Fatal("failed to get object entries:", err)
+				log.Fatalln("failed to get object entries:", err)
 			}
 			tbl := table.New("Name")
 			for _, entry := range entries {
@@ -59,17 +61,14 @@ var (
 
 	uploadCmd = &cobra.Command{
 		Use:   "upload",
-		Short: "upload a file to the network",
+		Short: "upload file(s) to the network",
 		Run: func(cmd *cobra.Command, files []string) {
-			for _, file := range files {
-				log.Println("Uploading", file)
-				start := time.Now()
-				checksum, err := uploadFile(renterPriv, filepath.Join(dataDir, "files"), file, minShards, totalShards)
-				if err != nil {
-					log.Fatal("failed to upload file:", err)
-				}
-				log.Printf("Uploaded %v in %v (%v %x)", file, time.Since(start), hashAlgo, checksum)
+			log.Printf("Uploading %v files", len(files))
+			start := time.Now()
+			if err := uploadFile(renterPriv, minShards, totalShards, files); err != nil {
+				log.Fatalln("failed to upload file:", err)
 			}
+			log.Printf("Uploaded %v in %v", len(files), time.Since(start))
 		},
 	}
 
@@ -88,7 +87,7 @@ var (
 			start := time.Now()
 			checksum, err := downloadFile(renterPriv, key, outputPath)
 			if err != nil {
-				log.Fatal("failed to download file:", err)
+				log.Fatalln("failed to download file:", err)
 			}
 			log.Printf("Downloaded %v in %v (%v %x)", key, time.Since(start), hashAlgo, checksum)
 		},
@@ -96,57 +95,74 @@ var (
 )
 
 // uploadFile uploads a file to the Sia network and adds a new object to renterd
-func uploadFile(renterPriv api.PrivateKey, dataDir, fp string, minShards, totalShards uint8) ([]byte, error) {
+func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files []string) error {
 	// choose the contracts to use
 	contracts, err := getUsableContracts(renterPriv, int(totalShards))
 	if err != nil {
-		return nil, fmt.Errorf("failed to get usable contracts: %w", err)
+		return fmt.Errorf("failed to get usable contracts: %w", err)
 	}
 
-	stat, err := os.Stat(fp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat file: %w", err)
-	}
+	r, w := io.Pipe()
 
-	f, err := os.Open(fp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
-	}
-	defer f.Close()
+	var wg sync.WaitGroup
+	wg.Add(len(files))
+	lengths := make([]int, 0, len(files))
+	go func() {
+		for _, file := range files {
+			err := func() error {
+				stat, err := os.Stat(file)
+				if err != nil {
+					return fmt.Errorf("failed to stat file: %w", err)
+				}
+				lengths = append(lengths, int(stat.Size()))
+				f, err := os.Open(file)
+				if err != nil {
+					return fmt.Errorf("failed to open file: %w", err)
+				}
+				defer f.Close()
+
+				_, err = io.Copy(w, f)
+				if err != nil {
+					return fmt.Errorf("failed to copy file: %w", err)
+				}
+				return nil
+			}()
+			if err != nil {
+				panic(err)
+			}
+
+			wg.Done()
+		}
+
+		// wait for all files to be uploaded
+		wg.Wait()
+		w.Close()
+	}()
 
 	// grab the current block height
 	tip, err := renterdClient.ConsensusTip()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get consensus tip: %w", err)
+		return fmt.Errorf("failed to get consensus tip: %w", err)
 	}
 
-	var h hash.Hash
-	switch strings.ToLower(hashAlgo) {
-	case "sha256":
-		h = sha256.New()
-	case "sha1":
-		h = sha1.New()
-	case "md5":
-		h = md5.New()
-	default:
-		return nil, fmt.Errorf("unknown hash algorithm: %v", hashAlgo)
-	}
-	tr := io.TeeReader(f, h)
-
-	slabs, err := renterdClient.UploadSlabs(tr, minShards, totalShards, tip.Height, contracts)
+	slabs, err := renterdClient.UploadSlabs(r, minShards, totalShards, tip.Height, contracts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to upload slabs: %w", err)
+		return fmt.Errorf("failed to upload slabs: %w", err)
 	}
+	log.Println("uploaded", slabs)
+	log.Println("len", lengths)
 
-	objs := object.SplitSlabs(slabs, []int{int(stat.Size())})
-	err = renterdClient.AddObject(filepath.Base(fp), object.Object{
-		Key:   object.GenerateEncryptionKey(),
-		Slabs: objs[0],
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to add object: %w", err)
+	objs := object.SplitSlabs(slabs, lengths)
+	for i, file := range files {
+		err = renterdClient.AddObject(filepath.Base(file), object.Object{
+			Key:   object.GenerateEncryptionKey(),
+			Slabs: objs[i],
+		})
 	}
-	return h.Sum(nil), nil
+	if err != nil {
+		return fmt.Errorf("failed to add object: %w", err)
+	}
+	return nil
 }
 
 func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) ([]byte, error) {
@@ -211,7 +227,7 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) ([]by
 		}
 
 		if count < slab.MinShards {
-			return nil, fmt.Errorf("not enough contracts available to download file")
+			return nil, errors.New("not enough contracts available to download file")
 		}
 
 		len += int64(slab.Length)
