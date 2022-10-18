@@ -63,12 +63,12 @@ var (
 		Use:   "upload",
 		Short: "upload file(s) to the network",
 		Run: func(cmd *cobra.Command, files []string) {
-			log.Printf("Uploading %v files", len(files))
+			log.Printf("Uploading %v objects", len(files))
 			start := time.Now()
 			if err := uploadFile(renterPriv, minShards, totalShards, files); err != nil {
 				log.Fatalln("failed to upload file:", err)
 			}
-			log.Printf("Uploaded %v in %v", len(files), time.Since(start))
+			log.Printf("Uploaded %v objects in %v", len(files), time.Since(start))
 		},
 	}
 
@@ -96,6 +96,12 @@ var (
 
 // uploadFile uploads a file to the Sia network and adds a new object to renterd
 func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files []string) error {
+	for _, f := range files {
+		if _, err := os.Stat(f); err != nil {
+			return fmt.Errorf("failed to stat file %v: %w", f, err)
+		}
+	}
+
 	// choose the contracts to use
 	contracts, err := getUsableContracts(renterPriv, int(totalShards))
 	if err != nil {
@@ -105,37 +111,50 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 	// not ideal, but io.Pipe lets us stream each file to renterd
 	r, w := io.Pipe()
 
-	var wg sync.WaitGroup
-	wg.Add(len(files))
+	// create the hasher
+	var h hash.Hash
+	switch strings.ToLower(hashAlgo) {
+	case "sha256":
+		h = sha256.New()
+	case "sha1":
+		h = sha1.New()
+	case "md5":
+		h = md5.New()
+	default:
+		return fmt.Errorf("unknown hash algorithm: %v", hashAlgo)
+	}
+
 	lengths := make([]int, 0, len(files))
+	checksums := make([][]byte, 0, len(files))
 	// start a goroutine to stream each file to renterd
 	go func() {
+		var wg sync.WaitGroup
+		wg.Add(len(files))
+
 		for _, file := range files {
+			h.Reset()
+
 			err := func() error {
-				// get the length of the file
-				stat, err := os.Stat(file)
-				if err != nil {
-					return fmt.Errorf("failed to stat file: %w", err)
-				}
-				// append the length to the slice
-				lengths = append(lengths, int(stat.Size()))
 				f, err := os.Open(file)
 				if err != nil {
 					return fmt.Errorf("failed to open file: %w", err)
 				}
 				defer f.Close()
 
-				// copy the file contents to the pipe
-				_, err = io.Copy(w, f)
+				// copy the file contents to the pipe and the hasher
+				tr := io.TeeReader(f, h)
+				n, err := io.Copy(w, tr)
 				if err != nil {
 					return fmt.Errorf("failed to copy file: %w", err)
 				}
+				// append the length and the checksum
+				lengths = append(lengths, int(n))
+				checksums = append(checksums, h.Sum(nil))
 				return nil
 			}()
 			if err != nil {
 				panic(err)
 			}
-
 			wg.Done()
 		}
 
@@ -160,12 +179,14 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 	// split the uploaded slabs into objects and add each object to renterd
 	objs := object.SplitSlabs(slabs, lengths)
 	for i, file := range files {
-		err = renterdClient.AddObject(filepath.Base(file), object.Object{
+		key := filepath.Base(file)
+		err = renterdClient.AddObject(key, object.Object{
 			Key:   object.GenerateEncryptionKey(),
 			Slabs: objs[i],
 		})
+		log.Printf("Added object %v - %v bytes (%v %x)", key, lengths[i], hashAlgo, checksums[i])
 		if err != nil {
-			return fmt.Errorf("failed to add object %v: %w", filepath.Base(file), err)
+			return fmt.Errorf("failed to add object %v: %w", key, err)
 		}
 	}
 	return nil
