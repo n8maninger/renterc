@@ -17,11 +17,11 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			address, err := renterdClient.WalletAddress()
 			if err != nil {
-				log.Fatal("failed to get wallet address:", err)
+				log.Fatalln("failed to get wallet address:", err)
 			}
 			balance, err := renterdClient.WalletBalance()
 			if err != nil {
-				log.Fatal("failed to get wallet balance:", err)
+				log.Fatalln("failed to get wallet balance:", err)
 			}
 			log.Println("Address:", address)
 			log.Println("Balance:", balance.HumanString())
@@ -34,7 +34,7 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			address, err := renterdClient.WalletAddress()
 			if err != nil {
-				log.Fatal("failed to get wallet address:", err)
+				log.Fatalln("failed to get wallet address:", err)
 			}
 			log.Println("Address:", address)
 		},
@@ -46,7 +46,7 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			balance, err := renterdClient.WalletBalance()
 			if err != nil {
-				log.Fatal("failed to get wallet balance:", err)
+				log.Fatalln("failed to get wallet balance:", err)
 			}
 			log.Println("Balance:", balance.HumanString())
 		},
@@ -77,7 +77,7 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			count, err := strconv.Atoi(args[0])
 			if err != nil {
-				log.Fatal("failed to parse count:", err)
+				log.Fatalln("failed to parse count:", err)
 			}
 
 			amount, err := parseCurrency(args[1])
@@ -87,7 +87,7 @@ var (
 
 			address, err := renterdClient.WalletAddress()
 			if err != nil {
-				log.Fatal("failed to get wallet address:", err)
+				log.Fatalln("failed to get wallet address:", err)
 			}
 
 			fragTxn := types.Transaction{
@@ -96,7 +96,11 @@ var (
 				SiacoinOutputs: make([]types.SiacoinOutput, count),
 			}
 
-			log.Printf("Sending %v outputs worth %v each to %v", count, amount.HumanString(), address)
+			if dryRun {
+				log.Printf("dry run: sending %v outputs worth %v each to %v", count, amount.HumanString(), address)
+			} else {
+				log.Printf("Sending %v outputs worth %v each to %v", count, amount.HumanString(), address)
+			}
 
 			for i := range fragTxn.SiacoinOutputs {
 				fragTxn.SiacoinOutputs[i] = types.SiacoinOutput{
@@ -108,23 +112,22 @@ var (
 			fundAmount := amount.Mul64(uint64(count))
 			toSign, _, err := renterdClient.WalletFund(&fragTxn, fundAmount)
 			if err != nil {
-				log.Fatal("failed to fund transaction:", err)
+				log.Fatalln("failed to fund transaction:", err)
 			} else if err := renterdClient.WalletSign(&fragTxn, toSign, types.FullCoveredFields); err != nil {
 				renterdClient.WalletDiscard(fragTxn)
-				log.Fatal("failed to sign transaction:", err)
+				log.Fatalln("failed to sign transaction:", err)
 			}
 
 			if dryRun {
 				renterdClient.WalletDiscard(fragTxn)
-				log.Println("Dry run, transaction discarded")
 				buf, _ := json.MarshalIndent(fragTxn, "", "  ")
-				fmt.Println(string(buf))
+				log.Println(string(buf))
 				return
 			}
 
 			if err := renterdClient.BroadcastTransaction([]types.Transaction{fragTxn}); err != nil {
 				renterdClient.WalletDiscard(fragTxn)
-				log.Fatal("failed to broadcast transaction:", err)
+				log.Fatalln("failed to broadcast transaction:", err)
 			}
 
 			log.Printf("Successfully broadcast transaction %v", fragTxn.ID())

@@ -59,10 +59,11 @@ func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
 
 // args
 var (
-	dataDir    string
-	dryRun     bool
-	hashAlgo   string
-	renterPriv api.PrivateKey
+	dataDir     string
+	dryRun      bool
+	skipConfirm bool
+	hashAlgo    string
+	renterPriv  api.PrivateKey
 )
 
 var (
@@ -90,7 +91,7 @@ var (
 				Benchmarked:        &benchmarked,
 			})
 			if err != nil {
-				log.Fatal("failed to get hosts:", err)
+				log.Fatalln("failed to get hosts:", err)
 			}
 			tbl := table.New("#", "Public Key", "Address")
 			for i, host := range hosts {
@@ -102,11 +103,14 @@ var (
 )
 
 func init() {
+	log.SetFlags(0)
+
 	// register contract flags
 	formCmd.Flags().StringVarP(&contractDurationStr, "duration", "D", "1w", "contract duration, accepts a duration and suffix (e.g. 1w)")
 	formCmd.Flags().StringVarP(&contractUsageStr, "usage", "U", "1GiB", "contract usage, accepts a size and suffix (e.g. 1TiB)")
 
 	// register file flags
+	downloadCmd.Flags().BoolVarP(&skipConfirm, "confirm", "y", false, "skip confirmation prompt")
 	downloadCmd.Flags().BoolVar(&dryRun, "dry-run", false, "dry run, don't actually download the file")
 	downloadCmd.Flags().StringVarP(&hashAlgo, "algo", "a", "sha256", "hash algorithm to use for verification")
 
@@ -130,7 +134,7 @@ func init() {
 		// load or generate the renter key
 		renterPriv, err = loadOrInitRenterKey(dataDir)
 		if err != nil {
-			log.Fatal("failed to load renter key:", err)
+			log.Fatalln("failed to load renter key:", err)
 		}
 	}
 
@@ -146,6 +150,6 @@ func init() {
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
 }

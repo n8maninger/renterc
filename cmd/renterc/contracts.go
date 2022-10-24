@@ -28,29 +28,26 @@ var (
 			if len(args) == 1 {
 				var id types.FileContractID
 				if err := id.LoadString(args[0]); err != nil {
-					log.Fatal(err)
+					log.Fatalln(err)
 				}
 				contract, err := renterdClient.Contract(id)
 				if err != nil {
-					log.Fatal(err)
+					log.Fatalln(err)
 				}
 
-				js, err := json.MarshalIndent(contract, "", "  ")
-				if err != nil {
-					log.Fatal(err)
-				}
-				fmt.Println(string(js))
+				js, _ := json.MarshalIndent(contract, "", "  ")
+				log.Println(string(js))
 				return
 			}
 
 			tip, err := renterdClient.ConsensusTip()
 			if err != nil {
-				log.Fatal(err)
+				log.Fatalln(err)
 			}
 
 			contracts, err := renterdClient.Contracts()
 			if err != nil {
-				log.Fatal("failed to get contracts:", err)
+				log.Fatalln("failed to get contracts:", err)
 			}
 
 			tbl := table.New("ID", "Expired", "Host", "Expiration Height", "Unspent Funds")
@@ -69,16 +66,16 @@ var (
 		Run: func(cmd *cobra.Command, hostKeys []string) {
 			contractUsage, err := parseByteStr(contractUsageStr)
 			if err != nil {
-				log.Fatal("failed to parse contract usage:", err)
+				log.Fatalln("failed to parse contract usage:", err)
 			}
 			contractDuration, err := parseBlockDurStr(contractDurationStr)
 			if err != nil {
-				log.Fatal("failed to parse contract duration:", err)
+				log.Fatalln("failed to parse contract duration:", err)
 			}
 
 			switch len(hostKeys) {
 			case 0:
-				log.Fatal("no host keys provided")
+				log.Fatalln("no host keys provided")
 			case 1:
 				log.Println("Forming contract with host", hostKeys[0])
 			default:
@@ -92,7 +89,7 @@ var (
 				var hostKey api.PublicKey
 				err := hostKey.UnmarshalText([]byte(hostKeys[0]))
 				if err != nil {
-					log.Fatal("failed to parse host key:", err)
+					log.Fatalln("failed to parse host key:", err)
 				}
 				contractID, err := formContract(renterPriv, hostKey, contractUsage, contractDuration)
 				if err != nil {

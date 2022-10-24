@@ -38,12 +38,12 @@ var (
 			if len(args) == 1 {
 				obj, err := renterdClient.Object(args[0])
 				if err != nil {
-					log.Fatalf("failed to get object: %v", err)
+					log.Fatalln("failed to get object:", err)
 				}
 
 				js, err := json.MarshalIndent(obj, "", "  ")
 				if err != nil {
-					log.Fatalf("failed to marshal object: %v", err)
+					log.Fatalln("failed to marshal object:", err)
 				}
 				fmt.Println(string(js))
 				return
@@ -63,7 +63,11 @@ var (
 	uploadCmd = &cobra.Command{
 		Use:   "upload",
 		Short: "upload file(s) to the network",
-		Long:  "renterc upload [flags] <file1> [<file2> ...]",
+		Long: `renterc upload [flags] <file1> [<file2> ...]
+
+Splits the local file(s) into shards and uploads them to the Sia network. The files will be packed together if multiple paths are specified to reduce wasted storage space.
+
+The flags -m and -n are used to control redundancy. m is the minimum number of shards required to recover the file, and n is the total number of hosts to use. A file with -m 1 -n 3 would be uploaded to 3 hosts, with 1 host required to recover the file. The siad renter defaults to -m 10 -n 30 for 3x redundancy across 30 hosts. The default is -m 1 -n 1, which has no redundancy. You must form contracts with at least <n> hosts before uploading.`,
 		Run: func(cmd *cobra.Command, files []string) {
 			log.Printf("Uploading %v objects", len(files))
 			start := time.Now()
@@ -78,6 +82,14 @@ var (
 		Use:   "download",
 		Short: "download a file from the network",
 		Long:  "renterc download <object> <file>",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if dryRun && len(args) != 1 {
+				return errors.New("only the object key arg is allowed when using --dry-run")
+			} else if len(args) != 2 {
+				return errors.New("<object> and <output file> are required")
+			}
+			return nil
+		},
 		Run: func(cmd *cobra.Command, files []string) {
 			var outputPath string
 			key := files[0]
@@ -85,7 +97,18 @@ var (
 				outputPath = files[1]
 			}
 
-			log.Println("Downloading object with key", key)
+			if !skipConfirm {
+				if _, err := os.Stat(outputPath); err == nil {
+					fmt.Printf("file %v already exists. Overwrite? (y/n): ", outputPath)
+					var confirm string
+					fmt.Scanln(&confirm)
+					if s := strings.ToLower(confirm); s != "y" && s != "yes" {
+						log.Fatalln("download aborted")
+					}
+				}
+			}
+
+			println("Downloading object with key", key)
 			start := time.Now()
 			checksum, err := downloadFile(renterPriv, key, outputPath)
 			if err != nil {
