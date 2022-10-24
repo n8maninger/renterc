@@ -22,6 +22,7 @@ var (
 	contractsCmd = &cobra.Command{
 		Use:   "contracts",
 		Short: "get a list of contracts or the details of a single contract",
+		Long:  "renterc contracts [flags] [contract id]",
 		Run: func(cmd *cobra.Command, args []string) {
 			// get the details of a single contract
 			if len(args) == 1 {
@@ -64,6 +65,7 @@ var (
 	formCmd = &cobra.Command{
 		Use:   "form",
 		Short: "form a contract with host(s)",
+		Long:  "renterc contracts form [flags] <host public key 1> [host public key 2 ...]",
 		Run: func(cmd *cobra.Command, hostKeys []string) {
 			contractUsage, err := parseByteStr(contractUsageStr)
 			if err != nil {

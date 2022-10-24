@@ -20,20 +20,30 @@ renterc contracts
 renterc contracts form ed25519:1fb61da55e8c54d6bc0fa0350b4eb5065af2a52485714a16680e7e21f686e2c7
 ```
 
-Contracts are formed for 1 week and 10 sectors of storage.
+By default, contracts are formed for 1 week and 1 GiB of upload and download.
+Duration can be changed with the `--duration 1m` flag  and data can be changed
+with the `--data 10GiB` flag. Since renterd is still primarily for test and test
+data, small short duration contracts are preferable.
 
 ### Upload Data:
 ```sh
 renterc objects upload -m 1 -n 3 Big_Buck_Bunny_1080_10s_30MB.mp4
 ```
 
-Uploads the file `Big_Buck_Bunny_1080_10s_30MB.mp4` with 3x redundancy. A minimum
-of three contracts must be formed.
+Uploads the file `Big_Buck_Bunny_1080_10s_30MB.mp4` with 3x redundancy. A
+minimum of three contracts must be formed. `-m` and `-n` are optional and
+default to 1. `n` is the total number of shards to upload, while `m` is the
+minimum number of shards required to reconstruct the file. Sia's default
+redundancy, for example, would be `-m 10 -n 30`.
+
+If multiple file paths are provided `renterc objects upload file_1.jpeg
+file_2.jpeg`, they will be packed before uploading. Each file will still
+be available under an individual key for downloading.
 
 ### Download Data:
 ```sh
 renterc objects download Big_Buck_Bunny_1080_10s_30MB.mp4 ~/dest.mp4
 ```
 
-Downloads the file `Big_Buck_Bunny_1080_10s_30MB.mp4` from the network, using
+Downloads the file `Big_Buck_Bunny_1080_10s_30MB.mp4` from the network using
 the metadata stored in `renterd`'s object store.
