@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
 	"go.sia.tech/renterd/api"
+	"go.sia.tech/siad/types"
 	"lukechampine.com/frand"
 )
 
@@ -95,6 +97,15 @@ func parseByteStr(s string) (uint64, error) {
 		return 0, fmt.Errorf("unknown unit: %v", unit)
 	}
 	return size, nil
+}
+
+func parseCurrency(s string) (types.Currency, error) {
+	hastings, err := types.ParseCurrency(s)
+	if err != nil {
+		return types.ZeroCurrency, fmt.Errorf("failed to parse currency: %w", err)
+	}
+	i, _ := new(big.Int).SetString(hastings, 10)
+	return types.NewCurrency(i), nil
 }
 
 func parseBlockDurStr(s string) (uint64, error) {

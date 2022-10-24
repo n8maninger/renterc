@@ -114,6 +114,9 @@ func init() {
 	uploadCmd.Flags().Uint8VarP(&totalShards, "total-shards", "n", 1, "total number of shards")
 	uploadCmd.Flags().StringVarP(&hashAlgo, "algo", "a", "sha256", "hash algorithm to use for verification")
 
+	// wallet flags
+	fragCmd.Flags().BoolVar(&dryRun, "dry-run", false, "dry run, don't actually broadcast the transaction")
+
 	// register global flags
 	rootCmd.PersistentFlags().StringVarP(&dataDir, "dir", "d", ".", "data directory")
 
@@ -136,7 +139,7 @@ func init() {
 	// add file commands
 	objectsCmd.AddCommand(uploadCmd, downloadCmd)
 	// add wallet commands
-	walletCmd.AddCommand(addressCmd, balanceCmd)
+	walletCmd.AddCommand(addressCmd, balanceCmd, fragCmd)
 	// add commands to root
 	rootCmd.AddCommand(contractsCmd, hostsCmd, objectsCmd, walletCmd)
 }

@@ -33,6 +33,7 @@ var (
 	objectsCmd = &cobra.Command{
 		Use:   "objects",
 		Short: "list objects",
+		Long:  "renterc objects [flags] [key]",
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) == 1 {
 				obj, err := renterdClient.Object(args[0])
@@ -62,6 +63,7 @@ var (
 	uploadCmd = &cobra.Command{
 		Use:   "upload",
 		Short: "upload file(s) to the network",
+		Long:  "renterc upload [flags] <file1> [<file2> ...]",
 		Run: func(cmd *cobra.Command, files []string) {
 			log.Printf("Uploading %v objects", len(files))
 			start := time.Now()
@@ -75,7 +77,7 @@ var (
 	downloadCmd = &cobra.Command{
 		Use:   "download",
 		Short: "download a file from the network",
-		Long:  "Usage: renterc download <object> <file>",
+		Long:  "renterc download <object> <file>",
 		Run: func(cmd *cobra.Command, files []string) {
 			var outputPath string
 			key := files[0]
