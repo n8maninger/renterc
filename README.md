@@ -22,8 +22,8 @@ renterc contracts form ed25519:1fb61da55e8c54d6bc0fa0350b4eb5065af2a52485714a166
 
 By default, contracts are formed for 1 week and 1 GiB of upload and download.
 Duration can be changed with the `--duration 1m` flag  and data can be changed
-with the `--data 10GiB` flag. Since renterd is still primarily for test and test
-data, small short duration contracts are preferable.
+with the `--data 10GiB` flag. Since renterd is still in development, it's
+recommended to only upload test data to small short duration contracts.
 
 ### Upload Data:
 
