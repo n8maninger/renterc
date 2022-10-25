@@ -45,7 +45,7 @@ func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
 		}
 		defer renterKeyFile.Close()
 
-		_, err = renterKeyFile.Write(renterKey[:])
+		_, err := renterKeyFile.Write(renterKey[:])
 		if err != nil {
 			return api.PrivateKey{}, err
 		}
@@ -55,7 +55,7 @@ func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
 	}
 	defer renterKeyFile.Close()
 
-	renterKey := make(api.PrivateKey, 32)
+	renterKey := make(api.PrivateKey, ed25519.PrivateKeySize)
 	_, err = io.ReadFull(renterKeyFile, renterKey)
 	return renterKey, err
 }
