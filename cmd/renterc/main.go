@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/rodaine/table"
@@ -32,6 +33,7 @@ var (
 // loadOrInitRenterKey loads the renter key from the data directory, or
 // generates a new one if it doesn't exist.
 func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
+	os.MkdirAll(dataDir, 0700) // create the directory if it doesn't exist
 	renterKeyPath := filepath.Join(dataDir, "renter.key")
 	renterKeyFile, err := os.Open(renterKeyPath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -134,7 +136,16 @@ func init() {
 	fragCmd.Flags().BoolVar(&dryRun, "dry-run", false, "dry run, don't actually broadcast the transaction")
 
 	// register global flags
-	rootCmd.PersistentFlags().StringVarP(&dataDir, "dir", "d", ".", "data directory")
+	defaultDataDir := "."
+	switch runtime.GOOS {
+	case "windows":
+		defaultDataDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "renterc")
+	case "darwin":
+		defaultDataDir = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "renterc")
+	default:
+		defaultDataDir = filepath.Join(os.Getenv("HOME"), ".local/renterc")
+	}
+	rootCmd.PersistentFlags().StringVarP(&dataDir, "dir", "d", defaultDataDir, "data directory")
 
 	// before running any command, load the renter key and initialize the
 	// directory
