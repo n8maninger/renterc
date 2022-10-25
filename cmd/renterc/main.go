@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rodaine/table"
 	"github.com/siacentral/apisdkgo"
@@ -93,11 +94,22 @@ var (
 			if err != nil {
 				log.Fatalln("failed to get hosts:", err)
 			}
-			tbl := table.New("#", "Public Key", "Address")
+			tbl := table.New("#", "Public Key", "Storage Price", "Ingress Price", "Egress Price", "First Seen", "Est. Uptime")
 			for i, host := range hosts {
-				tbl.AddRow(i+1, host.PublicKey, host.NetAddress)
+				storagePrice := fmt.Sprintf("%v/TBmo", host.Settings.StoragePrice.Mul64(1e12).Mul64(4320).HumanString())
+				uploadPrice := fmt.Sprintf("%v/TB", host.Settings.UploadBandwidthPrice.Mul64(1e12).HumanString())
+				downloadPrice := fmt.Sprintf("%v/TB", host.Settings.DownloadBandwidthPrice.Mul64(1e12).HumanString())
+				tbl.AddRow(i+1, host.PublicKey, storagePrice, uploadPrice, downloadPrice, host.FirstSeenTimestamp.Local().Format(time.RFC822), fmt.Sprintf("%.2f%%", host.EstimatedUptime))
 			}
 			tbl.Print()
+		},
+	}
+
+	keyCmd = &cobra.Command{
+		Use:   "key",
+		Short: "get the renter's private key",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println(renterPriv)
 		},
 	}
 )
@@ -145,7 +157,7 @@ func init() {
 	// add wallet commands
 	walletCmd.AddCommand(addressCmd, balanceCmd, fragCmd)
 	// add commands to root
-	rootCmd.AddCommand(contractsCmd, hostsCmd, objectsCmd, walletCmd)
+	rootCmd.AddCommand(keyCmd, contractsCmd, hostsCmd, objectsCmd, walletCmd)
 }
 
 func main() {

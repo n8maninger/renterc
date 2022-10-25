@@ -21,6 +21,7 @@ import (
 	"go.sia.tech/renterd/api"
 	"go.sia.tech/renterd/object"
 	"go.sia.tech/renterd/rhp/v2"
+	"lukechampine.com/frand"
 )
 
 var (
@@ -85,7 +86,7 @@ The flags -m and -n are used to control redundancy. m is the minimum number of s
 		Args: func(cmd *cobra.Command, args []string) error {
 			if dryRun && len(args) != 1 {
 				return errors.New("only the object key arg is allowed when using --dry-run")
-			} else if len(args) != 2 {
+			} else if !dryRun && len(args) != 2 {
 				return errors.New("<object> and <output file> are required")
 			}
 			return nil
@@ -118,6 +119,53 @@ The flags -m and -n are used to control redundancy. m is the minimum number of s
 		},
 	}
 )
+
+// getUsableContracts returns a list of contracts that can be used for storage
+func getUsableContracts(renterPriv api.PrivateKey, required int) ([]api.Contract, error) {
+	// chose the contracts to use
+	contracts, err := renterdClient.Contracts()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get contracts: %w", err)
+	}
+
+	tip, err := renterdClient.ConsensusTip()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consensus tip: %w", err)
+	}
+
+	// remove contracts that are expired or empty
+	usable := make([]api.Contract, 0, len(contracts))
+	for _, contract := range contracts {
+		// if the contract has expired, remove it. If it's is too close to the
+		// proof window start or if no renter funds remain, skip it
+		if tip.Height > contract.EndHeight() {
+			renterdClient.DeleteContract(contract.ID())
+			continue
+		} else if tip.Height >= uint64(contract.Revision.NewWindowStart)-144 || contract.Revision.NewValidProofOutputs[0].Value.IsZero() {
+			continue
+		}
+
+		host, err := siaCentralClient.GetHost(contract.HostKey().String())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get host %v info: %w", contract.HostKey().String(), err)
+		}
+
+		usable = append(usable, api.Contract{
+			ID:        contract.ID(),
+			HostKey:   contract.HostKey(),
+			HostIP:    host.NetAddress,
+			RenterKey: renterPriv,
+		})
+	}
+
+	if len(usable) < required {
+		return nil, fmt.Errorf("not enough usable contracts, need %v, have %v", required, len(usable))
+	}
+
+	// shuffle the contracts so the same ones are not always used
+	frand.Shuffle(len(usable), func(i, j int) { usable[i], usable[j] = usable[j], usable[i] })
+	return usable, nil
+}
 
 // uploadFile uploads a file to the Sia network and adds a new object to renterd
 func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files []string) error {
