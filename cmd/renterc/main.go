@@ -30,6 +30,17 @@ var (
 	}()
 )
 
+// generatePrivateKey creates a new private key from a secure entropy source.
+func generatePrivateKey() api.PrivateKey {
+	seed := make([]byte, ed25519.SeedSize)
+	frand.Read(seed)
+	pk := api.PrivateKey(ed25519.NewKeyFromSeed(seed))
+	for i := range seed {
+		seed[i] = 0
+	}
+	return pk
+}
+
 // loadOrInitRenterKey loads the renter key from the data directory, or
 // generates a new one if it doesn't exist.
 func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
@@ -38,7 +49,7 @@ func loadOrInitRenterKey(dataDir string) (api.PrivateKey, error) {
 	renterKeyFile, err := os.Open(renterKeyPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		// file doesn't exist, generate a new key
-		renterKey := api.PrivateKey(ed25519.NewKeyFromSeed(frand.Bytes(32)))
+		renterKey := generatePrivateKey()
 		renterKeyFile, err = os.Create(renterKeyPath)
 		if err != nil {
 			return api.PrivateKey{}, err
