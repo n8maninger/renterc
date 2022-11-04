@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -21,6 +22,7 @@ import (
 	"go.sia.tech/renterd/api"
 	"go.sia.tech/renterd/object"
 	"go.sia.tech/renterd/rhp/v2"
+	"go.sia.tech/renterd/slab"
 	"lukechampine.com/frand"
 )
 
@@ -121,6 +123,8 @@ The flags -m and -n are used to control redundancy. m is the minimum number of s
 )
 
 // getUsableContracts returns a list of contracts that can be used for storage
+//
+// TODO: sort contracts by upload/download speed and price instead of random
 func getUsableContracts(renterPriv api.PrivateKey, required int) ([]api.Contract, error) {
 	// chose the contracts to use
 	contracts, err := renterdClient.Contracts()
@@ -145,15 +149,16 @@ func getUsableContracts(renterPriv api.PrivateKey, required int) ([]api.Contract
 			continue
 		}
 
-		host, err := siaCentralClient.GetHost(contract.HostKey().String())
+		host, err := renterdClient.Host(contract.HostKey())
 		if err != nil {
 			return nil, fmt.Errorf("failed to get host %v info: %w", contract.HostKey().String(), err)
 		}
+		netaddress := host.Announcements[len(host.Announcements)-1].NetAddress
 
 		usable = append(usable, api.Contract{
 			ID:        contract.ID(),
 			HostKey:   contract.HostKey(),
-			HostIP:    host.NetAddress,
+			HostIP:    netaddress,
 			RenterKey: renterPriv,
 		})
 	}
@@ -181,9 +186,6 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 		return fmt.Errorf("failed to get usable contracts: %w", err)
 	}
 
-	// not ideal, but io.Pipe lets us stream each file to renterd
-	r, w := io.Pipe()
-
 	// create the hasher
 	var h hash.Hash
 	switch strings.ToLower(hashAlgo) {
@@ -199,6 +201,9 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 
 	lengths := make([]int, 0, len(files))
 	checksums := make([][]byte, 0, len(files))
+
+	// io.Pipe lets us treat all files as a continuous stream
+	r, w := io.Pipe()
 	// start a goroutine to stream each file to renterd
 	go func() {
 		var wg sync.WaitGroup
@@ -215,7 +220,7 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 				defer f.Close()
 
 				// copy the file contents to the pipe and the hasher
-				tr := io.TeeReader(f, h)
+				tr := io.TeeReader(bufio.NewReader(f), h)
 				n, err := io.Copy(w, tr)
 				if err != nil {
 					return fmt.Errorf("failed to copy file: %w", err)
@@ -242,11 +247,19 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 		return fmt.Errorf("failed to get consensus tip: %w", err)
 	}
 
-	// upload the slabs, using the pipe as the source. Each file will be copied
+	// upload each slab, using the pipe as the source. Each file will be copied
 	// to the pipe, then the pipe will be closed.
-	slabs, err := renterdClient.UploadSlabs(r, minShards, totalShards, tip.Height, contracts)
-	if err != nil {
-		return fmt.Errorf("failed to upload slabs: %w", err)
+	var slabs []slab.Slab
+	slabSize := int64(minShards) * rhp.SectorSize
+	for i := 0; ; i++ {
+		lr := io.LimitReader(r, slabSize)
+		slab, err := renterdClient.UploadSlab(lr, minShards, totalShards, tip.Height, contracts)
+		if err != nil && strings.Contains(err.Error(), ": EOF") { // cannot check errors.Is()
+			break
+		} else if err != nil {
+			return fmt.Errorf("failed to upload slab %v: %w", i, err)
+		}
+		slabs = append(slabs, slab)
 	}
 
 	// split the uploaded slabs into objects and add each object to renterd
@@ -298,7 +311,7 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) ([]by
 	// find a contract for each shard
 	added := make(map[api.PublicKey]bool)
 	var contracts []api.Contract
-	var len int64
+	var fileLength int64
 	for _, slab := range obj.Slabs {
 		var count uint8
 		for _, shard := range slab.Shards {
@@ -308,21 +321,21 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) ([]by
 			}
 
 			if !added[shard.Host] {
-				// grab the host's net address from the Sia Central API
-				host, err := siaCentralClient.GetHost(shard.Host.String())
+				// grab the host's net address from the renterd hostdb
+				host, err := renterdClient.Host(shard.Host)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get host: %w", err)
 				}
+				netaddress := host.Announcements[len(host.Announcements)-1].NetAddress
 
 				contracts = append(contracts, api.Contract{
 					HostKey:   shard.Host,
-					HostIP:    host.NetAddress,
+					HostIP:    netaddress,
 					ID:        hostContracts[shard.Host].ID(),
 					RenterKey: renterPriv,
 				})
 				added[shard.Host] = true
 			}
-
 			count++
 		}
 
@@ -330,17 +343,19 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) ([]by
 			return nil, errors.New("not enough contracts available to download file")
 		}
 
-		len += int64(slab.Length)
+		fileLength += int64(slab.Length)
 	}
 
 	if dryRun {
-		js, _ := json.MarshalIndent(api.SlabsDownloadRequest{
-			Slabs:     obj.Slabs,
-			Offset:    0,
-			Length:    len,
-			Contracts: contracts,
-		}, "", "  ")
-		fmt.Println(string(js))
+		n := len(obj.Slabs)
+		for i, slab := range obj.Slabs {
+			js, _ := json.MarshalIndent(api.SlabsDownloadRequest{
+				Slab:      slab,
+				Contracts: contracts,
+			}, "", "  ")
+			fmt.Printf("-- Request %v of %v --\n", i+1, n)
+			fmt.Println(string(js))
+		}
 		return nil, nil
 	}
 
@@ -364,9 +379,12 @@ func downloadFile(renterPriv api.PrivateKey, objectKey, outputPath string) ([]by
 	}
 	mw := io.MultiWriter(f, h)
 
-	if err := renterdClient.DownloadSlabs(mw, obj.Slabs, 0, len, contracts); err != nil {
-		return nil, fmt.Errorf("failed to download file: %w", err)
-	} else if err := f.Sync(); err != nil {
+	for i, slab := range obj.Slabs {
+		if err := renterdClient.DownloadSlab(mw, slab, contracts); err != nil {
+			return nil, fmt.Errorf("failed to download slab %v: %w", i, err)
+		}
+	}
+	if err := f.Sync(); err != nil {
 		return nil, fmt.Errorf("failed to sync file: %w", err)
 	}
 	return h.Sum(nil), nil

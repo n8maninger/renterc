@@ -6,7 +6,7 @@ require (
 	github.com/rodaine/table v1.0.1
 	github.com/siacentral/apisdkgo v0.1.1
 	github.com/spf13/cobra v1.0.0
-	go.sia.tech/renterd v0.0.0-20221014043432-a4575a782502
+	go.sia.tech/renterd v0.0.0-20221103213713-82548220b908
 	go.sia.tech/siad v1.5.9
 	lukechampine.com/frand v1.4.2
 )
@@ -34,7 +34,7 @@ require (
 	gitlab.com/NebulousLabs/ratelimit v0.0.0-20200811080431-99b8f0768b2e // indirect
 	gitlab.com/NebulousLabs/siamux v0.0.2-0.20220630142132-142a1443a259 // indirect
 	gitlab.com/NebulousLabs/threadgroup v0.0.0-20200608151952-38921fbef213 // indirect
-	go.sia.tech/jape v0.4.0 // indirect
+	go.sia.tech/jape v0.5.0 // indirect
 	golang.org/x/crypto v0.0.0-20220525230936-793ad666bf5e // indirect
 	golang.org/x/net v0.0.0-20211112202133-69e39bad7dc2 // indirect
 	golang.org/x/sys v0.0.0-20210615035016-665e8c7367d1 // indirect
