@@ -74,7 +74,7 @@ The flags -m and -n are used to control redundancy. m is the minimum number of s
 		Run: func(cmd *cobra.Command, files []string) {
 			log.Printf("Uploading %v objects", len(files))
 			start := time.Now()
-			if err := uploadFile(renterPriv, minShards, totalShards, files); err != nil {
+			if err := uploadFiles(renterPriv, minShards, totalShards, files); err != nil {
 				log.Fatalln("failed to upload file:", err)
 			}
 			log.Printf("Uploaded %v objects in %v", len(files), time.Since(start))
@@ -172,8 +172,9 @@ func getUsableContracts(renterPriv api.PrivateKey, required int) ([]api.Contract
 	return usable, nil
 }
 
-// uploadFile uploads a file to the Sia network and adds a new object to renterd
-func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files []string) error {
+// uploadFiles uploads files to the Sia network and adds a new object for each
+// file to renterd
+func uploadFiles(renterPriv api.PrivateKey, minShards, totalShards uint8, files []string) error {
 	for _, f := range files {
 		if _, err := os.Stat(f); err != nil {
 			return fmt.Errorf("failed to stat file %v: %w", f, err)
@@ -199,12 +200,22 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 		return fmt.Errorf("unknown hash algorithm: %v", hashAlgo)
 	}
 
+	// get the total upload length
+	var totalUploadBytes int64
+	for _, file := range files {
+		fi, err := os.Stat(file)
+		if err != nil {
+			return fmt.Errorf("failed to stat file %v: %w", file, err)
+		}
+		totalUploadBytes += fi.Size()
+	}
+
 	lengths := make([]int, 0, len(files))
 	checksums := make([][]byte, 0, len(files))
 
-	// io.Pipe lets us treat all files as a continuous stream
+	// use io.Pipe to treat all files as a continuous stream and pack them
+	// together
 	r, w := io.Pipe()
-	// start a goroutine to stream each file to renterd
 	go func() {
 		var wg sync.WaitGroup
 		wg.Add(len(files))
@@ -220,7 +231,7 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 				defer f.Close()
 
 				// copy the file contents to the pipe and the hasher
-				tr := io.TeeReader(bufio.NewReader(f), h)
+				tr := io.TeeReader(bufio.NewReaderSize(f, rhp.SectorSize), h)
 				n, err := io.Copy(w, tr)
 				if err != nil {
 					return fmt.Errorf("failed to copy file: %w", err)
@@ -250,13 +261,18 @@ func uploadFile(renterPriv api.PrivateKey, minShards, totalShards uint8, files [
 	// upload each slab, using the pipe as the source. Each file will be copied
 	// to the pipe, then the pipe will be closed.
 	var slabs []slab.Slab
-	slabSize := int64(minShards) * rhp.SectorSize
-	for i := 0; ; i++ {
-		lr := io.LimitReader(r, slabSize)
+	maxSlabSize := int64(minShards) * rhp.SectorSize
+	// TODO: parallelize
+	for i, rem := 0, totalUploadBytes; rem > 0; i, rem = i+1, rem-maxSlabSize {
+		uploadSize := rem
+		if uploadSize > maxSlabSize {
+			// if the upload size is greater than the slab size, use the slab
+			// size
+			uploadSize = maxSlabSize
+		}
+		lr := io.LimitReader(r, uploadSize)
 		slab, err := renterdClient.UploadSlab(lr, minShards, totalShards, tip.Height, contracts)
-		if err != nil && strings.Contains(err.Error(), ": EOF") { // cannot check errors.Is()
-			break
-		} else if err != nil {
+		if err != nil {
 			return fmt.Errorf("failed to upload slab %v: %w", i, err)
 		}
 		slabs = append(slabs, slab)
